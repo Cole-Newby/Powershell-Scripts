@@ -1,0 +1,86 @@
+# Print Nightmare vulnerability script
+
+# Check for mitigation registry values
+# check whether patches are installed
+# 
+# Targeting server OS: 2008, 2008 R2, 2012, 2012 R2, 2016, 2019
+
+# script output CSV format: server name, OS version, patch validity, Detected patch number, detected registry key value
+
+
+# get server name
+$computer = $env:COMPUTERNAME
+
+# get os version
+$osversion =  (Get-CimInstance -ClassName CIM_OperatingSystem).Caption + " (" + (Get-CimInstance -ClassName CIM_OperatingSystem).Version + ")"
+
+
+# check for patch number
+$patchid = "Not Found"
+$patchid_found = "Not Patched"
+
+
+
+if ($osversion -like "*2019*") {
+    if (Get-HotFix -Id KB5004947 -ErrorAction SilentlyContinue) {
+        $patchid = "KB5004947"
+    }
+}
+elseif ($osversion -like "*2016*") {
+    if (Get-HotFix -Id KB5004948 -ErrorAction SilentlyContinue) {
+        $patchid = "KB5004948"
+    }
+}
+elseif ($osversion -like "*2012 R2*") {
+    if (Get-HotFix -Id KB5004958 -ErrorAction SilentlyContinue) {
+        $patchid = "KB5004958"
+    }
+    elseif (Get-HotFix -Id KB5004954 -ErrorAction SilentlyContinue) {
+        $patchid = "KB5004954"
+    }
+}
+elseif ($osversion -like "*2012*") {
+    if (Get-HotFix -Id KB5004960 -ErrorAction SilentlyContinue) {
+        $patchid = "KB5004960"
+    }
+    elseif (Get-HotFix -Id KB5004956 -ErrorAction SilentlyContinue) {
+        $patchid = "KB5004956"
+    }
+}
+elseif ($osversion -like "*2008 R2*") {
+    if (Get-HotFix -Id KB5004951 -ErrorAction SilentlyContinue) {
+        $patchid = "KB5004951"
+    }
+    elseif (Get-HotFix -Id KB5004953 -ErrorAction SilentlyContinue) {
+        $patchid = "KB5004953"
+    }
+}
+elseif ($osversion -like "*2008*") {
+    if (Get-HotFix -Id KB5004959 -ErrorAction SilentlyContinue) {
+        $patchid = "KB5004959"
+    }
+    elseif (Get-HotFix -Id KB5004955 -ErrorAction SilentlyContinue) {
+        $patchid = "KB5004955"
+    }
+}
+else {
+    $patchid = "Unsupported OS patch vers"
+    $patchid_found = "Not Patched"
+}
+
+# get registry key value
+$reg_key_val = "Unable to reach key value"
+if (Test-Path -Path 'HKLM:\Software\Policies\Microsoft\Windows NT\Printers\PointAndPrint') 
+{
+  
+
+    if (($reg_key_val = Get-ItemPropertyValue -Path 'HKLM:\Software\Policies\Microsoft\Windows NT\Printers\PointAndPrint' -Name RestrictDriverInstallationToAdministrators) -eq 1) 
+    {
+        $patchid_found = "Patched"
+    }
+}
+
+
+# create and output results according to above specified CSV format
+$results = $computer + ", " + $osversion + ", " + $patchid + ", " + $patchid_found + ", RestrictDriverInstallationToAdministrators = " + $reg_key_val 
+Write-Output $results

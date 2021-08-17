@@ -1,0 +1,218 @@
+# Cole Newby
+# 7/28/2021
+
+# This script is designed to run through our AD and DNS records systems and highlight any differences
+# The end goal is to remove incorrect references in our DNS records
+
+# NOTES:
+# This code will take over 15 minutes to run, due to reverse DNS checks.
+#       After 15-20 minutes, ctrl+C the program. Can run indefinitely due to Infoblox formatting.
+# This code is expected to have errors in PowerShell.
+# Not all server names have a period or space in the name, but these must be checked for in multiple processes.
+# The desired csv file will output correctly.
+
+# If running this code locally, some files must be installed in the desired directory.
+# These files include:
+# Infoblox csv files
+#     These can be exported from the DNS section of Infoblox
+#     The first column needs to have the space removed in the header: IP Address --> IPAddress
+# DNS Manager file
+#     This can be exported in DNS manager
+
+# The desired output files are adList.csv and vCenter.csv
+
+
+# Some code provided by Paul Spagnola and Ben Tobias
+[cmdletbinding()]
+param(
+    [string]$vCenter='iti-vcenter.apogee.tamu.edu',
+    [ValidateSet('WP-VxRail-CL','WC-VxRail-CL','CUP','WCDC-PRE-PROD','REMOTE-CTRL-CL')][string]$Cluster='WP-VxRail-CL',
+    [ValidateSet('PoweredOn','PoweredOff','*')][string]$PowerState='PoweredOn',
+    [ValidateSet('csv','text')][string]$OutputType='csv',
+    [ValidateSet('*Windows*','*Linux*','*')][string]$GuestOS='*Windows*',
+    [string[]]$VMname='*',
+    # [string[]]$VMnameExclude=@('name','esx','ctrl','iti-rubrik','vcls','esrs','vrop','vlog','vp-','iti-nsx','iti-pan','iti-vcenter','clone','-old','- old','strat','gatekeep','win-','isflb',':','iti-template','iti-test','pme20'),
+    [ValidateSet('Guest','VM')][string]$NameType='Guest'
+    # [switch]$GetServersFromExcel=$false,
+    # [string]$ServerListFilePath="filepath",
+    # [string]$ExcelSheetName='UESIT_Complete_Server_List'
+)
+
+
+# Get list of pingable windows servers
+$ServerArray = Get-ADComputer -filter {OperatingSystem -like "Windows Server*" -and enabled -eq "True"} | Select-Object -Property Name
+$ServerArray | Export-Csv 'filepath' -NoTypeInformation
+
+
+# Get list of VMs from vCenter
+try
+    {
+        Write-Host 'Getting vCenter credentials from user...'
+        $cred = Get-Credential -Message "Enter vCenter credentials..."
+        if ($null -eq $cred)
+        {
+            Write-Warning "you must provide credentials for vcenter!"
+            exit
+        }
+
+        Write-Output 'Connectin to vCenter to get server names....'
+        $vcenterobj = Connect-VIServer -Server $vcenter -Credential $cred
+
+    } catch {
+    
+        Write-Warning ("error connecting to vCenter.{0}" -f $Error[0])
+        exit
+    }
+
+    if ($NameType -eq 'VM')
+    {
+        $output = (get-cluster -name $Cluster -Server $vcenterobj | Get-VM $VMname | Where-Object { $_.PowerState -like $PowerState -and $_.Guest -like $GuestOS} | Select-Object -Property Name | Sort-Object -Property Name)
+    } elseif ($NameType -like 'guest')
+    {
+        $output = (get-cluster -name $Cluster -Server $vcenterobj | Get-VM $VMname | Where-Object { $_.PowerState -like $PowerState -and $_.Guest -like $GuestOS} | Sort-Object -Property Name)
+    }
+
+    $vmlist = @()
+    foreach($vm in $output)
+    {
+        if ($NameType -eq 'VM')
+        {
+            $vmlist += $vm.Name 
+        } elseif ($NameType -like 'guest')
+        {
+            $vmlist += $vm.Guest.HostName
+        }
+       
+    }
+
+    $vmlist = $vmlist | Sort-Object
+
+#########
+# output functions
+##############
+
+function TransformArray()
+{
+    [cmdletbinding()]
+    param($arr)
+    $outarr = @()
+    
+    for ($i = 0; $i -lt $arr.count; $i++) {
+        $obj = New-Object PSObject
+        $obj | Add-Member -MemberType NoteProperty -Name 'Name' -Value $arr[$i]
+        $outarr += $obj
+    }
+    return $outarr
+}
+
+######################################
+#  output format
+########################################    
+if($OutputType.ToLower() -eq 'text')
+{
+    $vmlist
+    Write-Output ''
+    Write-Output ('Count: {0}' -f $vmlist.count)
+
+} elseif($OutputType.ToLower() -eq 'csv')
+{
+   
+    $file = 'C:\Users\cnewby\Desktop\scripts\dnsRC\vmlist.csv'
+    $vmlist -join ','
+
+    try {
+   
+    (TransformArray -arr $vmlist) | export-csv -Path $file -NoTypeInformation
+   }
+   catch {
+       Write-Warning 'cannot write csv. csv file may still be open!'
+   }
+}
+
+
+
+
+
+
+
+# check if values in AD are in vCenter
+$vmlistTwo = $vmlist
+for ($i = 0; $i -lt $vmlistTwo.Count; $i++) {$vmlistTwo[$i] = $vmlistTwo[$i] -replace ".apogee.tamu.edu" , ""}
+$ServerArrayTwo = Import-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\adList.csv'  | Select-Object -Property *, @{label = 'Found in vCenter'; expression = {$vmlistTwo -contains $_.Name}}
+$ServerArrayTwo | Export-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\adList.csv' -NoTypeInformation
+
+
+# check if values in AD are in apogee DNS
+$apogeeDNSList = Import-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\apogeeDNS.csv'  | Select-Object Name
+for ($i = 0; $i -lt $apogeeDNSList.Count; $i++) {$apogeeDNSList[$i] = $apogeeDNSList[$i].Name}
+$ServerArrayTwo = Import-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\adList.csv'  | Select-Object -Property *, @{label = 'Found in apogee DNS'; expression = {$apogeeDNSList -contains $_.Name}}
+$ServerArrayTwo | Export-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\adList.csv' -NoTypeInformation
+
+
+# check if values in AD are in infoblox
+$TenFiftyFive = Import-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\TenFiftyFiveOriginal.csv'  | Select-Object Name
+$OneTwentyEight = Import-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\OneTwentyEightOriginal.csv'  | Select-Object Name
+for ($i = 0; $i -lt $TenFiftyFive.Count; $i++) {
+    try {
+        $TenFiftyFive[$i] = $TenFiftyFive[$i].Name; 
+        $TenFiftyFive[$i] = $TenFiftyFive[$i].Substring(0,$TenFiftyFive[$i].IndexOf(' ')); 
+        $TenFiftyFive[$i] = $TenFiftyFive[$i].Substring(0,$TenFiftyFive[$i].IndexOf('.'))
+    }
+    catch [System.Exception] {}
+}
+for ($i = 0; $i -lt $OneTwentyEight.Count; $i++) {
+    try {
+        $OneTwentyEight[$i] = $OneTwentyEight[$i].Name; 
+        $OneTwentyEight[$i] = $OneTwentyEight[$i].Substring(0,$OneTwentyEight[$i].IndexOf(' ')); 
+        $OneTwentyEight[$i] = $OneTwentyEight[$i].Substring(0,$OneTwentyEight[$i].IndexOf('.'))
+    }
+    catch [System.Exception] {}    
+}
+$ServerArrayTwo = Import-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\adList.csv'  | Select-Object -Property *, @{label = 'Found in Infoblox 10.55'; expression = {$TenFiftyFive -contains $_.Name}}, @{label = 'Found in Infoblox 128'; expression = {$OneTwentyEight -contains $_.Name}}
+$ServerArrayTwo | Export-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\adList.csv' -NoTypeInformation
+
+
+
+# get apogee IPs
+$apogeeIPList = Import-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\apogeeDNS.csv'  | Select-Object Name, Data, Type
+$ServerArrayTwo = Import-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\adList.csv'  | Select-Object -Property *, @{label = 'apogee IPs'; expression = {if($apogeeDNSList -contains $_.Name) {$s = $_.Name; $apogeeIPList.Where({$PSItem.Name -eq $s -and $PSItem.Type -eq "Host (A)"}).Data} else {"x"}}}
+$ServerArrayTwo | Export-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\adList.csv' -NoTypeInformation
+# get apogee Dynamic/Static
+
+
+# get Infoblox IPs
+$InfobloxIPList = Import-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\OneTwentyEightOriginal.csv'  | Select-Object IPAddress, Name
+$InfobloxIPList += Import-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\TenFiftyFiveOriginal.csv'  | Select-Object IPAddress, Name
+$ServerArrayTwo = Import-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\adList.csv'  | Select-Object -Property *, @{label = 'Infoblox IPs'; expression = {if($TenFiftyFive -contains $_.Name) {$s = $_.Name + "*"; $InfobloxIPList.Where({$PSItem.Name -like $s}).IPAddress} elseif($OneTwentyEight -contains $_.Name) {$s = $_.Name + "*"; $InfobloxIPList.Where({$PSItem.Name -like $s}).IPAddress} else {"x"}}}
+$ServerArrayTwo | Export-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\adList.csv' -NoTypeInformation
+
+
+
+
+
+# check if values in vCenter are in AD
+$apogeeDNSTSList = Import-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\apogeeDNS.csv'  | Select-Object Name, Timestamp, Type
+(TransformArray -arr $vmlistTwo) | export-csv -Path 'C:\Users\cnewby\Desktop\scripts\dnsRC\vCenter.csv' -NoTypeInformation
+$ServerArrayNames = @()
+for ($i = $ServerArray.Count - 1; $i -ge 0 ; $i--) {$ServerArrayNames += $ServerArray[$i].Name}
+
+$ServerArrayTwo = Import-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\vCenter.csv'  | Select-Object -Property *, 
+@{label = 'Found in AD'; expression = {$ServerArrayNames -contains $_.Name}}, 
+@{label = 'Found in apogee DNS'; expression = {$apogeeDNSList -contains $_.Name}}, 
+@{label = 'IP from apogee DNS'; expression = {if($apogeeDNSList -contains $_.Name) {$s = $_.Name; $apogeeIPList.Where({$PSItem.Name -eq $s -and $PSItem.Type -eq "Host (A)"}).Data} else {"x"}}},
+@{label = 'Timestamp'; expression = {if($apogeeDNSList -contains $_.Name) {$s = $_.Name; $apogeeDNSTSList.Where({$PSItem.Name -eq $s -and $PSItem.Type -eq "Host (A)"}).Timestamp} else {"x"}}},
+@{label = 'DNS Reverse Lookup'; expression = {
+    if($apogeeDNSList -contains $_.Name) {
+        try {
+            $s = $_.Name; 
+            ([system.net.dns]::GetHostEntry($apogeeIPList.Where({$PSItem.Name -eq $s -and $PSItem.Type -eq "Host (A)"}).Data)).hostname 
+        }
+        catch [System.Exception] {
+            Console.WriteLine("Extra IPs");
+        }
+    }
+    else {"x"}
+}}
+
+
+$ServerArrayTwo | Export-Csv 'C:\Users\cnewby\Desktop\scripts\dnsRC\vCenter.csv' -NoTypeInformation

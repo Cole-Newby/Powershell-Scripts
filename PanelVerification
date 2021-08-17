@@ -1,0 +1,83 @@
+# Panel Name and IP Verification Script
+
+# Check that panel names and IPs exist in tamu.edu and bsn.tamu.edu
+
+# script output CSV format: panel Name, panel IP, exists in tamu.edu, matches tamu IP, TAMU IP, exists in bsn.tamu.edu, matches bsn IP, BSN IP
+
+
+
+
+# Load file
+# NOTE: to run this script, either save panel file in a desktop folder titled 'proj', or hardcode new directory here
+$fPath = 'C:\Users\cnewby\Desktop\proj\PanelConfigsTEST.xlsx'
+$file = New-Object -ComObject Excel.Application
+$file.Visible = $true
+$wb = $file.Workbooks.Open($fPath)
+$sheet = $wb.Sheets.Item("Panel IP Info")
+
+# get node identifiers and corresponding IPs
+$rowMax = ($sheet.UsedRange.Rows).count
+
+$nameIPDATA = @()
+
+for ($i = 1; $i -lt $rowMax; $i++) {
+    if ($sheet.Cells.Item($i, 1).text -eq "Node Identifier:") {
+        $nameIPDATA += ($sheet.Cells.Item($i, 2).text,$sheet.Cells.Item($i + 2, 2).text)
+    }
+}
+
+
+# compare list to tamu.edu and bsn.tamu.edu
+$namesTAMU = Import-Csv -Path 'C:\Users\cnewby\Desktop\proj\tamu.edu_ResourceRecordsTEST.csv' | Select-Object -ExpandProperty Name
+$typesTAMU = Import-Csv -Path 'C:\Users\cnewby\Desktop\proj\tamu.edu_ResourceRecordsTEST.csv' | Select-Object -ExpandProperty Type
+$dataTAMU = Import-Csv -Path 'C:\Users\cnewby\Desktop\proj\tamu.edu_ResourceRecordsTEST.csv' | Select-Object -ExpandProperty Data
+$namesBSN = Import-Csv -Path 'C:\Users\cnewby\Desktop\proj\bsn.tamu.edu_ResourceRecordsTEST.csv' | Select-Object -ExpandProperty Name
+$typesBSN = Import-Csv -Path 'C:\Users\cnewby\Desktop\proj\bsn.tamu.edu_ResourceRecordsTEST.csv' | Select-Object -ExpandProperty Type
+$dataBSN = Import-Csv -Path 'C:\Users\cnewby\Desktop\proj\bsn.tamu.edu_ResourceRecordsTEST.csv' | Select-Object -ExpandProperty Data
+$final = @() # array to be converted to specified csv format
+
+for ($i = 0; $i -lt $nameIPDATA.Count; $i += 2) {
+    $rowToAdd = New-Object psobject
+
+
+    $name = $nameIPDATA[$i]
+    $ip = $nameIPDATA[$i+1]
+    $existsTAMU = 'Does not exist'
+    if ($namesTAMU -contains $name) {
+        $existsTAMU = 'Exists'
+    }
+    $matchesTAMU = 'Does not match'
+    if ($dataTAMU -contains $ip) {
+        $matchesTAMU = 'Matches'
+    }
+    $existsBSN = 'Does not exist'
+    if ($namesBSN -contains $name) {
+        $existsBSN = 'Exists'
+    }
+    $matchesBSN = 'Does not match'
+    if ($dataBSN -contains $ip) {
+        $matchesBSN = 'Matches'
+    }
+
+    $rowToAdd | Add-Member -MemberType NoteProperty -Name "Name" -Value $name
+    $rowToAdd | Add-Member -MemberType NoteProperty -Name "Data" -Value $ip
+    $rowToAdd | Add-Member -MemberType NoteProperty -Name 'Exists in TAMU' -Value $existsTAMU
+    $rowToAdd | Add-Member -MemberType NoteProperty -Name 'Matches TAMU IP' -Value $matchesTAMU
+    $rowToAdd | Add-Member -MemberType NoteProperty -Name 'Exists in BSN' -Value $existsBSN
+    $rowToAdd | Add-Member -MemberType NoteProperty -Name 'Matches BSN IP' -Value $matchesBSN
+    $final += $rowToAdd
+}
+
+
+
+
+
+# cleanup
+$wb.close()
+$file.Quit()
+While([System.Runtime.Interopservices.Marshal]::ReleaseComObject($wb) -ge 0){}
+while([System.Runtime.Interopservices.Marshal]::ReleaseComObject($file) -ge 0){} 
+
+
+# output
+$final | Export-Csv -Path 'C:\temp\PanelVerification.csv' -NoTypeInformation

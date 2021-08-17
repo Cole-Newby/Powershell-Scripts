@@ -1,0 +1,41 @@
+# parse netstat output for DNS names that contain "BS"
+
+# output csv format: name, IP addr
+
+# NOTE: the param should be entered as *param* in command line
+
+# set param
+$param = $args[0]
+
+# get remote addrs
+$aa = (Get-NetTCPConnection | Select-Object -ExpandProperty RemoteAddress)
+$a = [System.Collections.ArrayList]$aa
+# $a
+# get IPs of valid addrs
+Workflow Get-DNSNames([System.Collections.ArrayList]$IPAddresses){
+    foreach -parallel ($IP in $IPAddresses | Select-Object -Unique){
+            $rowToAdd = New-Object psobject
+            try{
+                @{$IP = $(([system.net.dns]::GetHostEntry($IP)).hostname)}
+            }catch{
+                @{$IP = "N/A"}
+            }
+    }
+    
+}
+
+
+# output to txt
+$a = Get-DNSNames -IPAddresses $a
+
+$b = @{}
+foreach ($HT in $a) {
+    $b += $HT
+}
+$b.GetEnumerator() |
+    Select-Object -Property @{N='Name';E={$_.Value}},
+    @{N='IP';E={$_.Name}} |
+        Export-Csv -NoTypeInformation -Path "C:\tempp\ap-b.csv"
+
+$c = Import-Csv -Path "C:\tempp\ap-b.csv" | ? Name -like $param
+$c | Export-Csv -NoTypeInformation -Path "C:\tempp\ap-b.csv"

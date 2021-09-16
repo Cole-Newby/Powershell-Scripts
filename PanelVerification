@@ -9,7 +9,7 @@
 
 # Load file
 # NOTE: to run this script, either save panel file in a desktop folder titled 'proj', or hardcode new directory here
-$fPath = 'C:\Users\cnewby\Desktop\proj\PanelConfigsTEST.xlsx'
+$fPath = pathname
 $file = New-Object -ComObject Excel.Application
 $file.Visible = $true
 $wb = $file.Workbooks.Open($fPath)
